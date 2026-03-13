@@ -51,6 +51,7 @@ def generar_horarios(materias: List[Materia]):
 
         grupo = str(m.Grupo)
         profesor = data.get("NombreProfesor", "Sin profesor")
+        turno = data.get("Turno", "M")
 
         horario_limpio = []
 
@@ -68,31 +69,11 @@ def generar_horarios(materias: List[Materia]):
             "Semestre": semestre,
             "Grupo": grupo,
             "NombreProfesor": profesor,
+            "Turno": turno,
             "Horario": horario_limpio
         })
 
     materias = materias_limpias
-
-    # =========================
-    # DISTRIBUIR DÍAS
-    # =========================
-    dias_ordenados = ["Lunes", "Miercoles", "Viernes", "Martes", "Jueves"]
-
-    for i, materia in enumerate(materias):
-
-        nuevo_horario = []
-
-        for h in materia["Horario"]:
-
-            dia = dias_ordenados[i % len(dias_ordenados)]
-
-            nuevo_horario.append({
-                "dia": dia,
-                "inicio": h["inicio"],
-                "fin": h["fin"]
-            })
-
-        materia["Horario"] = nuevo_horario
 
     # =========================
     # ORTOOLS
@@ -118,27 +99,36 @@ def generar_horarios(materias: List[Materia]):
             h2 = materias[i2]["Horario"][j2]
 
             if h1["dia"] == h2["dia"]:
-                solapan = not (h1["fin"] <= h2["inicio"] or h2["fin"] <= h1["inicio"])
+                solapan = not (
+                    h1["fin"] <= h2["inicio"] or h2["fin"] <= h1["inicio"]
+                )
 
                 if solapan:
                     model.Add(var1 != var2)
 
     solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = 5
+
     status = solver.Solve(model)
 
     if status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
-        return {"error": "No se pudo generar horario"}
+        print("OR-Tools no encontró solución exacta, usando distribución manual")
 
     # =========================
     # RESPUESTA FINAL
     # =========================
     resultado = []
 
-    dias_reparto = ["Lunes", "Miercoles", "Viernes", "Martes", "Jueves"]
+    dias_reparto = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes"]
 
-    ocupacion_global = {dia: set() for dia in dias_reparto}
+    ocupacion_global = {}
 
     for i, materia in enumerate(materias):
+
+        clave = f"{materia['Semestre']}-{materia['Grupo']}"
+
+        if clave not in ocupacion_global:
+            ocupacion_global[clave] = {dia: set() for dia in dias_reparto}
 
         salida = {
             **materia,
@@ -146,6 +136,8 @@ def generar_horarios(materias: List[Materia]):
         }
 
         aula_index = i % len(aulas)
+
+        turno = materia.get("Turno", "M")
 
         for j, h in enumerate(materia["Horario"]):
 
@@ -162,18 +154,22 @@ def generar_horarios(materias: List[Materia]):
 
                 dia_actual = dias_reparto[(i + b) % len(dias_reparto)]
 
-                hora_inicio = 7
+                # =========================
+                # HORARIO POR TURNO
+                # =========================
+                if turno == "V":
+                    hora_inicio = 13
+                    limite = 17
+                else:
+                    hora_inicio = 7
+                    limite = 11
 
-                while True:
-
-                    # máximo 6 clases por día (7 a 13)
-                    if hora_inicio + horas_bloque > 13:
-                        break
+                while hora_inicio <= limite:
 
                     conflicto = False
 
                     for offset in range(horas_bloque):
-                        if (hora_inicio + offset) in ocupacion_global[dia_actual]:
+                        if (hora_inicio + offset) in ocupacion_global[clave][dia_actual]:
                             conflicto = True
                             break
 
@@ -182,22 +178,22 @@ def generar_horarios(materias: List[Materia]):
 
                     hora_inicio += 1
 
-                # si cabe dentro del horario permitido
-                if hora_inicio + horas_bloque <= 13:
+                if hora_inicio > limite:
+                    continue
 
-                    for offset in range(horas_bloque):
+                for offset in range(horas_bloque):
 
-                        hora_actual = hora_inicio + offset
+                    hora_actual = hora_inicio + offset
 
-                        ocupacion_global[dia_actual].add(hora_actual)
+                    ocupacion_global[clave][dia_actual].add(hora_actual)
 
-                        salida["AulaAsignada"].append({
-                            "dia": dia_actual,
-                            "inicio": hora_actual,
-                            "fin": hora_actual + 1,
-                            "aula": aulas[aula_index],
-                            "profesor": materia.get("NombreProfesor", "")
-                        })
+                    salida["AulaAsignada"].append({
+                        "dia": dia_actual,
+                        "inicio": hora_actual,
+                        "fin": hora_actual + 1,
+                        "aula": aulas[aula_index],
+                        "profesor": materia.get("NombreProfesor", "")
+                    })
 
         resultado.append(salida)
 
