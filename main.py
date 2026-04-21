@@ -16,8 +16,10 @@ app = FastAPI(title="Generador de Horarios con OR-Tools")
 # =========================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
-    allow_origins=["https://andradem.ddns.net/"]
+    allow_origins=[
+        "http://localhost:5173",
+        "https://andradem.ddns.net"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
