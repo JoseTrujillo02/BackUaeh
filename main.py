@@ -23,7 +23,7 @@ app.add_middleware(
 )
 
 # =========================
-# MODELOS
+# MODELO
 # =========================
 class Materia(BaseModel):
     Semestre: Any
@@ -52,16 +52,57 @@ def limpiar_entero(valor):
 
 
 # =========================
-# ENDPOINT PRINCIPAL
+# AULAS REALES ESCUELA
+# =========================
+AULAS_GENERALES = (
+    [f"C-Aula {i}" for i in range(1, 13)] +
+    [f"D-Aula {i}" for i in range(1, 13)] +
+    [f"E-Aula {i}" for i in range(1, 13)]
+)
+
+LAB_QUIMICA = [
+    "A-Lab Químico 1",
+    "A-Lab Químico 2"
+]
+
+SALAS_COMPUTO = [
+    "B-Sala Cómputo 1",
+    "B-Sala Cómputo 2",
+    "B-Sala Cómputo 3"
+]
+
+LAB_B = [
+    "B-Laboratorio 1"
+]
+
+
+# =========================
+# DETECTAR TIPO DE AULA
+# =========================
+def obtener_aulas_por_materia(nombre):
+
+    nombre = nombre.lower()
+
+    if "comput" in nombre or "digital" in nombre or "inform" in nombre:
+        return SALAS_COMPUTO
+
+    elif "quim" in nombre:
+        return LAB_QUIMICA
+
+    elif "laboratorio" in nombre:
+        return LAB_B
+
+    return AULAS_GENERALES
+
+
+# =========================
+# ENDPOINT
 # =========================
 @app.post("/generar-horarios")
 def generar_horarios(materias: List[Materia]):
 
     materias_limpias = []
 
-    # =========================
-    # NORMALIZAR DATOS
-    # =========================
     for m in materias:
 
         data = m.dict()
@@ -74,6 +115,7 @@ def generar_horarios(materias: List[Materia]):
         grupo = str(m.Grupo)
         profesor = data.get("NombreProfesor", "Sin profesor")
         turno = data.get("Turno", "M")
+        nombre = data.get("NombreAsignatura", "")
 
         horario_limpio = []
 
@@ -92,6 +134,7 @@ def generar_horarios(materias: List[Materia]):
             "Grupo": grupo,
             "NombreProfesor": profesor,
             "Turno": turno,
+            "NombreAsignatura": nombre,
             "Horario": horario_limpio
         })
 
@@ -102,39 +145,8 @@ def generar_horarios(materias: List[Materia]):
     # =========================
     model = cp_model.CpModel()
 
-    aulas = [f"Aula {i}" for i in range(1, 11)]
-
-    asignaciones = []
-
-    for i, materia in enumerate(materias):
-        for j, h in enumerate(materia["Horario"]):
-            aula_var = model.NewIntVar(0, len(aulas)-1, f"aula_{i}_{j}")
-            asignaciones.append((i, j, aula_var))
-
-    for i1, j1, var1 in asignaciones:
-        for i2, j2, var2 in asignaciones:
-
-            if (i1, j1) >= (i2, j2):
-                continue
-
-            h1 = materias[i1]["Horario"][j1]
-            h2 = materias[i2]["Horario"][j2]
-
-            if h1["dia"] == h2["dia"]:
-                solapan = not (
-                    h1["fin"] <= h2["inicio"] or h2["fin"] <= h1["inicio"]
-                )
-
-                if solapan:
-                    model.Add(var1 != var2)
-
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 5
-
-    status = solver.Solve(model)
-
-    if status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
-        print("OR-Tools no encontró solución exacta, usando distribución manual")
 
     # =========================
     # RESPUESTA FINAL
@@ -144,79 +156,79 @@ def generar_horarios(materias: List[Materia]):
     dias_reparto = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes"]
 
     ocupacion_global = {}
-
-    for i, materia in enumerate(materias):
-
+    control_grupos = {}
+    
+    for materia in materias:
+    
         clave = f"{materia['Semestre']}-{materia['Grupo']}"
-
+    
         if clave not in ocupacion_global:
-            ocupacion_global[clave] = {dia: set() for dia in dias_reparto}
-
+            ocupacion_global[clave] = {
+                dia: {} for dia in dias_reparto
+            }
+    
+        if clave not in control_grupos:
+            control_grupos[clave] = {
+                "dia_index": 0,
+                "hora": 7 if materia.get("Turno", "M") != "V" else 13
+            }
+    
         salida = {
             **materia,
             "AulaAsignada": []
         }
-
-        aula_index = i % len(aulas)
-
+    
+        aulas_disponibles = obtener_aulas_por_materia(
+            materia.get("NombreAsignatura", "")
+        )
+    
+        aula_index = 0
+    
         turno = materia.get("Turno", "M")
-
-        for j, h in enumerate(materia["Horario"]):
-
+    
+        limite = 17 if turno == "V" else 12
+    
+        for h in materia["Horario"]:
+        
             total_horas = h["fin"] - h["inicio"]
-
-            bloques = []
-
+    
             while total_horas > 0:
-                horas_dia = min(2, total_horas)
-                bloques.append(horas_dia)
-                total_horas -= horas_dia
-
-            for b, horas_bloque in enumerate(bloques):
-
-                dia_actual = dias_reparto[(i + b) % len(dias_reparto)]
-
-                # =========================
-                # HORARIO POR TURNO
-                # =========================
-                if turno == "V":
-                    hora_inicio = 13
-                    limite = 17
-                else:
-                    hora_inicio = 7
-                    limite = 11
-
-                while hora_inicio <= limite:
-
-                    conflicto = False
-
-                    for offset in range(horas_bloque):
-                        if (hora_inicio + offset) in ocupacion_global[clave][dia_actual]:
-                            conflicto = True
-                            break
-
-                    if not conflicto:
-                        break
-
-                    hora_inicio += 1
-
-                if hora_inicio > limite:
+            
+                dia_actual = dias_reparto[
+                    control_grupos[clave]["dia_index"] % len(dias_reparto)
+                ]
+    
+                hora_inicio = control_grupos[clave]["hora"]
+    
+                aula_actual = aulas_disponibles[aula_index % len(aulas_disponibles)]
+    
+                if aula_actual not in ocupacion_global[clave][dia_actual]:
+                    ocupacion_global[clave][dia_actual][aula_actual] = set()
+    
+                conflicto = hora_inicio in ocupacion_global[clave][dia_actual][aula_actual]
+    
+                if conflicto:
+                    aula_index += 1
                     continue
-
-                for offset in range(horas_bloque):
-
-                    hora_actual = hora_inicio + offset
-
-                    ocupacion_global[clave][dia_actual].add(hora_actual)
-
-                    salida["AulaAsignada"].append({
-                        "dia": dia_actual,
-                        "inicio": hora_actual,
-                        "fin": hora_actual + 1,
-                        "aula": aulas[aula_index],
-                        "profesor": materia.get("NombreProfesor", "")
-                    })
-
+                
+                ocupacion_global[clave][dia_actual][aula_actual].add(hora_inicio)
+    
+                salida["AulaAsignada"].append({
+                    "dia": dia_actual,
+                    "inicio": hora_inicio,
+                    "fin": hora_inicio + 1,
+                    "aula": aula_actual,
+                    "profesor": materia.get("NombreProfesor", "")
+                })
+    
+                control_grupos[clave]["hora"] += 1
+    
+                if control_grupos[clave]["hora"] > limite:
+                    control_grupos[clave]["hora"] = 13 if turno == "V" else 7
+                    control_grupos[clave]["dia_index"] += 1
+    
+                total_horas -= 1
+    
         resultado.append(salida)
 
     return resultado
@@ -341,7 +353,7 @@ def generar_horarios_v2(data: dict):
 
     restricciones_profesores = {
 
-        # 🟢 HORARIO DEFINIDO
+        #  HORARIO DEFINIDO
         "DUARTE ESPARZA LUIS ALEJANDRO": {
             "hora_min": 7,
             "hora_max": 15
@@ -372,7 +384,7 @@ def generar_horarios_v2(data: dict):
             "hora_max": 15
         },
 
-        # 🟢 DESPUÉS DE CIERTA HORA
+        #  DESPUÉS DE CIERTA HORA
         "HERNÁNDEZ MONROY NALLELY": {
             "hora_min": 10
         },
@@ -385,7 +397,7 @@ def generar_horarios_v2(data: dict):
             "hora_min": 19
         },
 
-        # 🟢 DÍAS ESPECÍFICOS
+        # DÍAS ESPECÍFICOS
         "MARTINEZ ACOSTA ADOLFO": {
             "dias_permitidos": ["Lunes", "Miercoles", "Viernes"],
             "hora_min": 7,
@@ -393,7 +405,7 @@ def generar_horarios_v2(data: dict):
         },
 
 
-        # 🟢 HORARIOS COMPLEJOS
+        #  HORARIOS COMPLEJOS
 
         "MARTINES ARANO HILARIO": {
             "horario_por_dia": {
@@ -542,7 +554,7 @@ def generar_horarios_v2(data: dict):
                 if turno == "MX" and not (11 <= h <= 19):
                     continue
 
-                # 🔴 VALIDAR PROFESOR AQUÍ
+                #  VALIDAR PROFESOR 
                 valido = True
 
                 if "hora_min" in restricciones and h < restricciones["hora_min"]:
@@ -563,16 +575,11 @@ def generar_horarios_v2(data: dict):
                         valido = False
 
                 if not valido:
-                    continue  # 🔥 NO CREAR VARIABLE
+                    continue  #  NO CREAR VARIABLE
 
                 x[(a_idx, d, h)] = model.NewBoolVar(f"x_{a_idx}_{d}_{h}")
 
 
-    for a in asignaciones:
-        horas_sem = a["horas_semanales"]
-
-        if horas_sem > 9:
-            a["horas_semanales"] = max(1, round(horas_sem / 16))
 
     # -------------------------
     # RESTRICCIÓN 1: HORAS SEMANALES
@@ -787,17 +794,17 @@ def generar_horarios_v2(data: dict):
 
                 r = restricciones_dinamicas[profesor]
 
-                # 🔴 DÍA LIBRE (CLAVE)
+                #  DÍA LIBRE 
                 if r.get("dia_libre", False):
                     # si ese día NO trabaja → no puede haber clases
                     model.Add(var <= trabaja_dia[(profesor, d)])
 
-                # 🔴 días permitidos
+                # días permitidos
                 if "dias_permitidos" in r:
                     if d not in r["dias_permitidos"]:
                         model.Add(var == 0)
 
-                # 🔴 horario simple
+                #  horario simple
                 if "hora_min" in r:
                     if h < r["hora_min"]:
                         model.Add(var == 0)
@@ -806,7 +813,7 @@ def generar_horarios_v2(data: dict):
                     if h >= r["hora_max"]:
                         model.Add(var == 0)
 
-                # 🔴 horario por día
+                #  horario por día
                 if "horario_por_dia" in r:
                     if d in r["horario_por_dia"]:
                         h_min, h_max = r["horario_por_dia"][d]
@@ -832,7 +839,7 @@ def generar_horarios_v2(data: dict):
 
                     dias_trabaja = [trabaja_dia[(profesor, d)] for d in dias]
 
-                    # 🔥 EXACTAMENTE 1 DÍA LIBRE
+                    # EXACTAMENTE 1 DÍA LIBRE
                     model.Add(sum(dias_trabaja) == 4)
    
     # -------------------------
@@ -1002,8 +1009,8 @@ def generar_horarios_v2(data: dict):
 
     model.Maximize(
         sum(x.values()) * 5 +        # cumplir horas
-        sum(bloques) * 20  +            # MUY importante bloques
-        sum(bloques_prop.values()) * 10 -  # 👈 NUEVO (empuja propedéuticos bien colocados)
+        sum(bloques) * 20  +            #  bloques
+        sum(bloques_prop.values()) * 10 -  #  (empuja propedéuticos bien colocados)
         sum(horas_solas) * 25 -        #castigar horas sueltas
         sum(huecos_prof) * 20 +  # castiga huecos de profes fuerte
         sum(dias_usados) * 2 -        # repartir en más días
