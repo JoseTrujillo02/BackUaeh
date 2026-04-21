@@ -353,7 +353,7 @@ def generar_horarios_v2(data: dict):
 
     restricciones_profesores = {
 
-        # 🟢 HORARIO DEFINIDO
+        #  HORARIO DEFINIDO
         "DUARTE ESPARZA LUIS ALEJANDRO": {
             "hora_min": 7,
             "hora_max": 15
@@ -384,7 +384,7 @@ def generar_horarios_v2(data: dict):
             "hora_max": 15
         },
 
-        # 🟢 DESPUÉS DE CIERTA HORA
+        #  DESPUÉS DE CIERTA HORA
         "HERNÁNDEZ MONROY NALLELY": {
             "hora_min": 10
         },
@@ -397,7 +397,7 @@ def generar_horarios_v2(data: dict):
             "hora_min": 19
         },
 
-        # 🟢 DÍAS ESPECÍFICOS
+        # DÍAS ESPECÍFICOS
         "MARTINEZ ACOSTA ADOLFO": {
             "dias_permitidos": ["Lunes", "Miercoles", "Viernes"],
             "hora_min": 7,
@@ -405,7 +405,7 @@ def generar_horarios_v2(data: dict):
         },
 
 
-        # 🟢 HORARIOS COMPLEJOS
+        #  HORARIOS COMPLEJOS
 
         "MARTINES ARANO HILARIO": {
             "horario_por_dia": {
@@ -554,7 +554,7 @@ def generar_horarios_v2(data: dict):
                 if turno == "MX" and not (11 <= h <= 19):
                     continue
 
-                # 🔴 VALIDAR PROFESOR AQUÍ
+                #  VALIDAR PROFESOR 
                 valido = True
 
                 if "hora_min" in restricciones and h < restricciones["hora_min"]:
@@ -575,16 +575,11 @@ def generar_horarios_v2(data: dict):
                         valido = False
 
                 if not valido:
-                    continue  # 🔥 NO CREAR VARIABLE
+                    continue  #  NO CREAR VARIABLE
 
                 x[(a_idx, d, h)] = model.NewBoolVar(f"x_{a_idx}_{d}_{h}")
 
 
-    for a in asignaciones:
-        horas_sem = a["horas_semanales"]
-
-        if horas_sem > 9:
-            a["horas_semanales"] = max(1, round(horas_sem / 16))
 
     # -------------------------
     # RESTRICCIÓN 1: HORAS SEMANALES
@@ -799,17 +794,17 @@ def generar_horarios_v2(data: dict):
 
                 r = restricciones_dinamicas[profesor]
 
-                # 🔴 DÍA LIBRE (CLAVE)
+                #  DÍA LIBRE 
                 if r.get("dia_libre", False):
                     # si ese día NO trabaja → no puede haber clases
                     model.Add(var <= trabaja_dia[(profesor, d)])
 
-                # 🔴 días permitidos
+                # días permitidos
                 if "dias_permitidos" in r:
                     if d not in r["dias_permitidos"]:
                         model.Add(var == 0)
 
-                # 🔴 horario simple
+                #  horario simple
                 if "hora_min" in r:
                     if h < r["hora_min"]:
                         model.Add(var == 0)
@@ -818,7 +813,7 @@ def generar_horarios_v2(data: dict):
                     if h >= r["hora_max"]:
                         model.Add(var == 0)
 
-                # 🔴 horario por día
+                #  horario por día
                 if "horario_por_dia" in r:
                     if d in r["horario_por_dia"]:
                         h_min, h_max = r["horario_por_dia"][d]
@@ -844,7 +839,7 @@ def generar_horarios_v2(data: dict):
 
                     dias_trabaja = [trabaja_dia[(profesor, d)] for d in dias]
 
-                    # 🔥 EXACTAMENTE 1 DÍA LIBRE
+                    # EXACTAMENTE 1 DÍA LIBRE
                     model.Add(sum(dias_trabaja) == 4)
    
     # -------------------------
@@ -1014,8 +1009,8 @@ def generar_horarios_v2(data: dict):
 
     model.Maximize(
         sum(x.values()) * 5 +        # cumplir horas
-        sum(bloques) * 20  +            # MUY importante bloques
-        sum(bloques_prop.values()) * 10 -  # 👈 NUEVO (empuja propedéuticos bien colocados)
+        sum(bloques) * 20  +            #  bloques
+        sum(bloques_prop.values()) * 10 -  #  (empuja propedéuticos bien colocados)
         sum(horas_solas) * 25 -        #castigar horas sueltas
         sum(huecos_prof) * 20 +  # castiga huecos de profes fuerte
         sum(dias_usados) * 2 -        # repartir en más días
