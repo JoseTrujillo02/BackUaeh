@@ -18,7 +18,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
-        "https://andradem.ddns.net"
+        "http://andradem.ddns.net"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -1040,9 +1040,14 @@ def generar_horarios_v2(data: dict):
     # SOLVER
     # -------------------------
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 180
+    solver.parameters.max_time_in_seconds = 15
+
+    print("🚀 Iniciando solver")
 
     status = solver.Solve(model)
+    
+    print("✅ Solver terminado")
+    print("STATUS:", status)
 
     print("STATUS:", status)
 
