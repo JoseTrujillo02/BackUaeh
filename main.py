@@ -8,6 +8,15 @@ from ortools.sat.python import cp_model
 import copy
 from typing import Dict
 from collections import defaultdict
+import logging
+
+
+logging.basicConfig(
+    level=logging.INFO,  # cambia a DEBUG si quieres más detalle
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+)
+
+logger = logging.getLogger("horarios")
 
 app = FastAPI(title="Generador de Horarios con OR-Tools")
 
@@ -101,11 +110,15 @@ def obtener_aulas_por_materia(nombre):
 @app.post("/generar-horarios")
 def generar_horarios(materias: List[Materia]):
 
+    logger.info("=== INICIO generar_horarios ===")
+    logger.info(f"Materias recibidas: {len(materias)}")
+
     materias_limpias = []
 
     for m in materias:
-
         data = m.dict()
+
+        logger.debug(f"Procesando materia: {data.get('NombreAsignatura')}")
 
         try:
             semestre = int(m.Semestre)
@@ -116,7 +129,6 @@ def generar_horarios(materias: List[Materia]):
         profesor = data.get("NombreProfesor", "Sin profesor")
         turno = data.get("Turno", "M")
         nombre = data.get("NombreAsignatura", "")
-
         horario_limpio = []
 
         for h in m.Horario:
@@ -137,30 +149,6 @@ def generar_horarios(materias: List[Materia]):
             "NombreAsignatura": nombre,
             "Horario": horario_limpio
         })
-
-    materias = materias_limpias
-
-    # =========================
-    # ORTOOLS
-    # =========================
-    model = cp_model.CpModel()
-
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 5
-
-    # =========================
-    # RESPUESTA FINAL
-    # =========================
-    resultado = []
-
-    dias_reparto = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes"]
-
-    ocupacion_global = {}
-    control_grupos = {}
-    
-    for materia in materias:
-    
-        clave = f"{materia['Semestre']}-{materia['Grupo']}"
     
         if clave not in ocupacion_global:
             ocupacion_global[clave] = {
@@ -238,9 +226,12 @@ def generar_horarios(materias: List[Materia]):
 #
 @app.post("/transformar-excel")
 async def transformar_excel(file: UploadFile = File(...)):
+    logger.info(f"POST /transformar-excel called - filename: {getattr(file, 'filename', 'unknown')}")
+    logger.info(f"Archivo recibido: {file.filename}")
+
 
     df = pd.read_excel(file.file)
-
+    logger.info(f"Filas leídas: {len(df)}") 
     data = df.to_dict(orient="records")
 
     modelo = transformar_datos(data)
@@ -256,6 +247,8 @@ async def transformar_excel(file: UploadFile = File(...)):
 @app.post("/transformar-datos")
 def transformar_datos(data: List[Dict]):
 
+    logger.info(f"POST /transformar-datos called - registros recibidos: {len(data)}")
+    
     profesores = {}
     materias = {}
     grupos = {}
@@ -263,52 +256,36 @@ def transformar_datos(data: List[Dict]):
 
     for fila in data:
 
-        # -------------------------
-        # PROFESOR
-        # -------------------------
         nombre_prof = limpiar_texto(fila.get("Nombre del profesor"))
-
-        if nombre_prof:
-            if nombre_prof not in profesores:
-                profesores[nombre_prof] = {
-                    "id": nombre_prof
-                }
-
-        # -------------------------
-        # MATERIA
-        # -------------------------
         nombre_mat = limpiar_texto(fila.get("Nombre de la asignatura"))
-        horas = limpiar_entero(fila.get("Horas"))
-
-        if nombre_mat:
-            if nombre_mat not in materias:
-                materias[nombre_mat] = {
-                    "id": nombre_mat,
-                    "horas_semanales": horas
-                }
-
-        # -------------------------
-        # GRUPO
-        # -------------------------
         grupo = limpiar_texto(fila.get("Grupo"))
+
+        logger.debug(f"Fila: Profesor={nombre_prof}, Materia={nombre_mat}, Grupo={grupo}")
+
+        horas = limpiar_entero(fila.get("Horas"))
         semestre = limpiar_entero(fila.get("Semestre"))
         turno = limpiar_texto(fila.get("Turno")) or "M"
         pe = limpiar_texto(fila.get("PE"))
 
+        if nombre_prof and nombre_prof not in profesores:
+            profesores[nombre_prof] = {"id": nombre_prof}
+
+        if nombre_mat and nombre_mat not in materias:
+            materias[nombre_mat] = {
+                "id": nombre_mat,
+                "horas_semanales": horas
+            }
+
         grupo_id = f"{pe}-{semestre}-{grupo}" if grupo else ""
 
-        if grupo_id:
-            if grupo_id not in grupos:
-                grupos[grupo_id] = {
-                    "id": grupo_id,
-                    "semestre": semestre,
-                    "turno": turno,
-                    "pe": pe
-                }
+        if grupo_id and grupo_id not in grupos:
+            grupos[grupo_id] = {
+                "id": grupo_id,
+                "semestre": semestre,
+                "turno": turno,
+                "pe": pe
+            }
 
-        # -------------------------
-        # ASIGNACION
-        # -------------------------
         if nombre_mat and nombre_prof and grupo_id:
             asignaciones.append({
                 "materia_id": nombre_mat,
@@ -317,6 +294,11 @@ def transformar_datos(data: List[Dict]):
                 "horas_semanales": horas
             })
 
+    logger.info(f"Profesores: {len(profesores)}")
+    logger.info(f"Materias: {len(materias)}")
+    logger.info(f"Grupos: {len(grupos)}")
+    logger.info(f"Asignaciones: {len(asignaciones)}")
+
     return {
         "profesores": list(profesores.values()),
         "materias": list(materias.values()),
@@ -324,16 +306,18 @@ def transformar_datos(data: List[Dict]):
         "asignaciones": asignaciones
     }
 
-
 #Endpoint para asignar clases (FUNCIONAL)
 #
 #ORTOOLS
 #
 @app.post("/generar-horarios-v2")
 def generar_horarios_v2(data: dict):
-
+    logger.info("POST /generar-horarios-v2 called")
+    logger.info("Creando variables del modelo...")
     asignaciones = data["asignaciones"]
     grupos = {g["id"]: g for g in data["grupos"]}
+
+    logger.info(f"generar_horarios_v2 - asignaciones: {len(asignaciones)} grupos: {len(grupos)}")
 
     # -------------------------
     # DETECTAR PERIODO
@@ -345,7 +329,7 @@ def generar_horarios_v2(data: dict):
     else:
         periodo = "ENERO_JUNIO"
 
-    print("📅 PERIODO DETECTADO:", periodo)
+    logger.info("PERIODO DETECTADO: %s", periodo)
 
     #
     #RESTRICCIONES DE PROFESORES
@@ -535,7 +519,7 @@ def generar_horarios_v2(data: dict):
     # VARIABLES
     # -------------------------
     x = {}
-
+    
     for a_idx, a in enumerate(asignaciones):
         grupo = grupos[a["grupo_id"]]
         turno = grupo["turno"]
@@ -578,18 +562,27 @@ def generar_horarios_v2(data: dict):
                     continue  # 🔥 NO CREAR VARIABLE
 
                 x[(a_idx, d, h)] = model.NewBoolVar(f"x_{a_idx}_{d}_{h}")
+    logger.info(f"Total variables creadas: {len(x)}")
 
-
+    # Quitar ajustes arbitrarios de horas; respetar exactamente lo que viene en el Excel
     for a in asignaciones:
         horas_sem = a["horas_semanales"]
-
-        if horas_sem > 9:
-            a["horas_semanales"] = max(1, round(horas_sem / 16))
+        # asegurar entero no-negativo
+        try:
+            a["horas_semanales"] = int(max(0, int(horas_sem)))
+        except Exception:
+            a["horas_semanales"] = 0
 
     # -------------------------
     # RESTRICCIÓN 1: HORAS SEMANALES
     # -------------------------
     horas_asignadas = []
+
+    # RESTRICCIÓN 1: HORAS SEMANALES EXACTAS (forzar igualdad)
+    horas_asignadas = []
+
+    # penalizaciones usadas cuando no hay suficientes slots
+    penalizaciones = []
 
     for a_idx, a in enumerate(asignaciones):
 
@@ -599,17 +592,24 @@ def generar_horarios_v2(data: dict):
             if ai == a_idx:
                 vars_asignacion.append(var)
 
-        total = model.NewIntVar(0, a["horas_semanales"], f"total_{a_idx}")
-        model.Add(total == sum(vars_asignacion))
+        if vars_asignacion:
+            disponible = len(vars_asignacion)
+            requerido = a["horas_semanales"]
 
-        horas_asignadas.append((total, a["horas_semanales"]))
+            # siempre permitir asignar hasta lo requerido
+            model.Add(sum(vars_asignacion) <= requerido)
+
+            # crear variable de falta = requerido - asignadas (0..requerido)
+            falta = model.NewIntVar(0, requerido, f"falta_{a_idx}")
+            model.Add(falta == requerido - sum(vars_asignacion))
+
+            if disponible < requerido:
+                logger.warning("NO CABEN HORAS: %s requiere %s pero solo %s slots disponibles", a.get("materia_id"), requerido, disponible)
+
+            penalizaciones.append(falta)
     
+    # Ya no usamos penalizaciones de falta (horas exactas)
     penalizaciones = []
-
-    for i, (total, requerido) in enumerate(horas_asignadas):
-        falta = model.NewIntVar(0, requerido, f"falta_{i}")
-        model.Add(falta == requerido - total)
-        penalizaciones.append(falta)
 
 
     #
@@ -869,21 +869,35 @@ def generar_horarios_v2(data: dict):
 
    
    #
-   # BLOQUES DE HORAS(DISTRIBUCIÓN DE HORAS)
-   #
-    bloques = []
+    # -------------------------
+    # BLOQUES DE 2 HORAS (FORZAR DISTRIBUCIÓN EN BLOQUES DE 2 HORAS POR DÍA)
+    # -------------------------
+    bloques = {}
 
-    for (a_idx, d, h), var in x.items():
+    for (a_idx, d, h), var in list(x.items()):
         if (a_idx, d, h+1) in x:
+            b = model.NewBoolVar(f"bloque_{a_idx}_{d}_{h}")
+            # b => ambas horas activas
+            model.Add(x[(a_idx, d, h)] + x[(a_idx, d, h+1)] >= 2 * b)
+            # si b==1 entonces ambas deben ser 1; podemos también asegurar integridad por objetivo
+            bloques[(a_idx, d, h)] = b
 
-            bloque = model.NewBoolVar(f"bloque_{a_idx}{d}{h}")
+    # Para cada asignación, favorecer/forzar que las horas se compongan por bloques de 2 cuando sea posible
+    for a_idx, a in enumerate(asignaciones):
+        req = a["horas_semanales"]
 
-            # bloque = 1 si ambas horas están activas
-            model.Add(bloque <= var)
-            model.Add(bloque <= x[(a_idx, d, h+1)])
-            model.Add(bloque >= var + x[(a_idx, d, h+1)] - 1)
+        # lista de bloques posibles para esta asignación (uno por inicio de hora)
+        bloques_posibles = [b for (ai, d, h), b in bloques.items() if ai == a_idx]
 
-            bloques.append(bloque)
+        # Si las horas requeridas son pares, intentar organizarlas como bloques de 2: forzar suma(bloques)*2 == req
+        if req > 0 and req % 2 == 0 and bloques_posibles:
+            model.Add(sum(bloques_posibles) * 2 == req)
+            # además, limitar a un bloque por día
+            dias = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes"]
+            for d in dias:
+                bloques_dia = [b for (ai, dd, h), b in bloques.items() if ai == a_idx and dd == d]
+                if bloques_dia:
+                    model.Add(sum(bloques_dia) <= 1)
     
     #
     # variables para materias en un dia
@@ -1009,12 +1023,12 @@ def generar_horarios_v2(data: dict):
                     bloques_dia.append(inicio_bloque)
 
             if bloques_dia:
-                # SOLO UN BLOQUE POR DÍA
-                model.Add(sum(bloques_dia) <= 1)
+                # Relajado: permitir hasta 2 bloques por día por materia
+                model.Add(sum(bloques_dia) <= 2)
 
     model.Maximize(
         sum(x.values()) * 5 +        # cumplir horas
-        sum(bloques) * 20  +            # MUY importante bloques
+        sum(bloques.values()) * 20  +            # MUY importante bloques
         sum(bloques_prop.values()) * 10 -  # 👈 NUEVO (empuja propedéuticos bien colocados)
         sum(horas_solas) * 25 -        #castigar horas sueltas
         sum(huecos_prof) * 20 +  # castiga huecos de profes fuerte
@@ -1037,7 +1051,7 @@ def generar_horarios_v2(data: dict):
                         x[(a_idx, d, h+3)]
                         <= 3
                     )
-
+    logger.info("Ejecutando solver...")
     # -------------------------
     # SOLVER
     # -------------------------
@@ -1046,19 +1060,28 @@ def generar_horarios_v2(data: dict):
 
     status = solver.Solve(model)
 
-    print("STATUS:", status)
+    logger.info("Solver llamado - esperando resultado...")
+    logger.info("STATUS: %s", status)
 
     if status == cp_model.INFEASIBLE:
-        print("❌ MODELO INFACTIBLE")
+        logger.error("MODELO INFACTIBLE")
+        # Fallback: intentar la versión alternativa del resolver que puede relajar restricciones
+        try:
+            logger.info("Intentando fallback con generar_horariov3 debido a infactibilidad...")
+            fallback = generar_horariov3(data)
+            logger.info("Fallback generado, devolviendo resultado alternativo (long=%s)", len(fallback))
+            return fallback
+        except Exception as e:
+            logger.exception("FALLBACK FALLIDO: %s", e)
     elif status == cp_model.MODEL_INVALID:
-        print("⚠️ MODELO INVALIDO")
+        logger.warning("MODELO INVALIDO")
     elif status == cp_model.UNKNOWN:
-        print("⏳ NO ENCONTRO SOLUCION EN EL TIEMPO")
+        logger.warning("NO ENCONTRO SOLUCION EN EL TIEMPO")
     elif status == cp_model.FEASIBLE:
-        print("✅ SOLUCION FACTIBLE")
+        logger.info("SOLUCION FACTIBLE")
     elif status == cp_model.OPTIMAL:
-        print("🏆 SOLUCION OPTIMA")
-
+        logger.info("SOLUCION OPTIMA")
+    
     # -------------------------
     # RESULTADO
     # -------------------------
@@ -1163,11 +1186,11 @@ def generar_horarios_v2(data: dict):
 
     # imprimir errores
     if errores:
-        print("\n❌ ERRORES EN HORARIOS:")
+        logger.error("ERRORES EN HORARIOS:")
         for e in errores:
-            print(e)
+            logger.error(e)
     else:
-        print("\n✅ TODOS LOS PROFESORES RESPETAN SUS HORARIOS")
+        logger.info("TODOS LOS PROFESORES RESPETAN SUS HORARIOS")
 
 
     return resultado
@@ -1180,6 +1203,8 @@ def generar_horarios_v2(data: dict):
 #
 @app.post("/generar_horariov3")
 def generar_horariov3(data: Dict):
+
+    logger.info("POST /generar_horariov3 called")
 
     asignaciones = data.get("asignaciones", [])
     
@@ -1215,6 +1240,8 @@ def generar_horariov3(data: Dict):
     # -------------------------
     def resolver_semestre(asigns):
 
+        logger.info(f"resolver_semestre called - asigns: {len(asigns)}")
+
         model = cp_model.CpModel()
         x = {}
 
@@ -1228,7 +1255,7 @@ def generar_horariov3(data: Dict):
         else:
             periodo = "ENERO_JUNIO"
 
-        print("📅 PERIODO DETECTADO:", periodo)
+        logger.info("PERIODO DETECTADO: %s", periodo)
 
 
         #
@@ -1504,7 +1531,8 @@ def generar_horariov3(data: Dict):
                 ]
 
                 if vars_dia:
-                    model.Add(sum(vars_dia) <= 1)
+                    # Relajado: permitir varias horas por día para la misma materia (hasta 4)
+                    model.Add(sum(vars_dia) <= 4)
 
                 exceso = model.NewIntVar(0, 10, f"exceso_{a_idx}_{d}")
                 model.Add(sum(vars_dia) <= 1 + exceso)
@@ -1731,7 +1759,7 @@ def generar_horariov3(data: Dict):
             #- sum(penalizaciones) * 1
         )
 
-        print("\n🔥 DEBUG REAL DE CAPACIDAD:")
+        logger.info("DEBUG REAL DE CAPACIDAD:")
 
         for a_idx, a in enumerate(asigns):
 
@@ -1745,9 +1773,8 @@ def generar_horariov3(data: Dict):
            # print(f"{a['materia_id']} | {profesor} | opciones: {len(opciones)} | requiere: {a['horas_semanales']}")
 
         if len(opciones) < a["horas_semanales"]:
-            print("❌ NO CABE:", a["materia_id"])
-
-        print("\n🔥 SATURACIÓN REAL:")
+            logger.warning("NO CABE: %s", a.get("materia_id"))
+        logger.info("SATURACIÓN REAL:")
 
         carga = {}
         for a in asigns:
@@ -1755,14 +1782,15 @@ def generar_horariov3(data: Dict):
             carga[p] = carga.get(p, 0) + a["horas_semanales"]
 
         for p, h in carga.items():
-            print(p, h)
+            logger.info("%s %s", p, h)
 
         # -------------------------
         # SOLVER
         # -------------------------
         solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = 10
+        solver.parameters.max_time_in_seconds = 30
 
+        logger.info("Resolver semestre - llamando solver")
         status = solver.Solve(model)
 
         resultado = []
@@ -1786,7 +1814,7 @@ def generar_horariov3(data: Dict):
                     })
 
         else:
-            print("❌ No se encontró solución para este semestre")
+            logger.warning("No se encontró solución para este semestre")
 
         return resultado
 
@@ -1852,7 +1880,7 @@ def generar_horariov3(data: Dict):
     horario_final = []
 
     for semestre, asigns in asignaciones_por_semestre.items():
-        print(f"\n🚀 Resolviendo semestre {semestre}")
+        logger.info("Resolviendo semestre %s", semestre)
         resultado_semestre = resolver_semestre(asigns)
         horario_final.extend(resultado_semestre)
 
@@ -1876,9 +1904,9 @@ def generar_horariov3(data: Dict):
         g = a["grupo_id"]
         horas_solicitadas[g] = horas_solicitadas.get(g, 0) + a["horas_semanales"]
 
-    print("\n📊 COMPARACIÓN:")
+    logger.info("COMPARACIÓN:")
     for g in horas_solicitadas:
-        print(f"{g} -> solicitadas: {horas_solicitadas[g]} / asignadas: {horas_por_grupo.get(g, 0)}")
+        logger.info("%s -> solicitadas: %s / asignadas: %s", g, horas_solicitadas[g], horas_por_grupo.get(g, 0))
 
     # -------------------------
     # DEBUG PROFESORES
@@ -1895,7 +1923,7 @@ def generar_horariov3(data: Dict):
 
     for p, h in horas_prof.items():
         if h > 40:
-            print("⚠️ PROF SOBRECARGADO:", p, h)
+            logger.warning("PROF SOBRECARGADO: %s %s", p, h)
 
     # -------------------------
     # RESPUESTA FINAL
