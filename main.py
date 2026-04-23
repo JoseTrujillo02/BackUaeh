@@ -1030,7 +1030,7 @@ def generar_horarios_v2(data: dict):
 
     model.Maximize(
         sum(x.values()) * 5 +        # cumplir horas
-        sum(bloques) * 20  +            #  bloques
+        sum(bloques.values()) * 20  +            #  bloques
         sum(bloques_prop.values()) * 10 -  #  (empuja propedéuticos bien colocados)
         sum(horas_solas) * 25 -        #castigar horas sueltas
         sum(huecos_prof) * 20 +  # castiga huecos de profes fuerte
